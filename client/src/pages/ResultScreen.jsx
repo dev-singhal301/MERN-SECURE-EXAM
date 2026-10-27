@@ -77,7 +77,7 @@ export default function ResultScreen() {
     );
   }
 
-  if (!exam.show_results) {
+  if (!exam || !exam.show_results) {
     return (
       <div className="max-w-lg mx-auto mt-16 p-8 bg-white border border-zinc-200 rounded-2xl text-center space-y-5 shadow-xs">
         <div className="w-12 h-12 bg-amber-50 text-amber-600 border border-amber-200 rounded-xl flex items-center justify-center mx-auto">
@@ -86,7 +86,7 @@ export default function ResultScreen() {
         <div className="space-y-1">
           <h2 className="text-lg font-bold text-zinc-900">Assessment Submitted Successfully</h2>
           <p className="text-xs text-zinc-500 leading-relaxed">
-            Your answers have been securely logged. The administrator has not yet released the scoring results for <strong className="text-zinc-800">{exam.title}</strong>.
+            Your answers have been securely logged. The administrator has not yet released the scoring results for <strong className="text-zinc-800">{exam?.title || 'this exam'}</strong>.
           </p>
         </div>
         <Link to="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800 hover:text-teal-900 pt-2">
@@ -102,6 +102,10 @@ export default function ResultScreen() {
   const myRank = leaderboard?.length > 0 
     ? leaderboard.findIndex((item) => item.studentId === user._id) + 1 
     : 0;
+
+  // Safe defaults to prevent React crashes if MongoDB strips empty objects
+  const answersObj = submission.answers || {};
+  const manualGradesObj = submission.manual_grades || {};
 
   return (
     <div className="max-w-4xl mx-auto p-6 md:p-8 space-y-8">
@@ -208,14 +212,14 @@ export default function ResultScreen() {
 
               <div className="space-y-4">
                 {questions.map((q, idx) => {
-                  const studentChoice = submission.answers[q._id];
+                  const studentChoice = answersObj[q._id] !== undefined ? answersObj[q._id] : answersObj[idx];
                   const correctIndices = q.correct_answers || [];
                   const pMarks = q.marks || 1;
                   const nMarks = q.negative_marks || 0;
 
                   if (q.type === 'text') {
-                    const isGraded = submission.is_reviewed && submission.manual_grades && submission.manual_grades[q._id] !== undefined;
-                    const awardedMarks = isGraded ? submission.manual_grades[q._id] : 0;
+                    const isGraded = submission.is_reviewed && manualGradesObj[q._id] !== undefined;
+                    const awardedMarks = isGraded ? manualGradesObj[q._id] : 0;
 
                     return (
                       <div key={q._id} className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs space-y-4">
@@ -248,7 +252,7 @@ export default function ResultScreen() {
                   if (q.type === 'single' || q.type === 'boolean') {
                     isCorrect = isAttempted && correctIndices.includes(studentChoice);
                   } else if (q.type === 'multiple') {
-                    isCorrect = isAttempted && studentChoice.length === correctIndices.length && studentChoice.every((v) => correctIndices.includes(v));
+                    isCorrect = isAttempted && Array.isArray(studentChoice) && studentChoice.length === correctIndices.length && studentChoice.every((v) => correctIndices.includes(v));
                   }
 
                   return (
