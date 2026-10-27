@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { Shield, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -9,7 +9,9 @@ export default function Login() {
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const validateForm = () => {
     setErrorMsg('');
@@ -39,16 +41,12 @@ export default function Login() {
 
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-
-    if (error) {
-      setErrorMsg(error.message);
-      setLoading(false);
-    } else {
+    try {
+      await login(email.trim(), password);
       navigate('/');
+    } catch (err) {
+      setErrorMsg(err.response?.data?.message || 'Login failed. Please check your credentials.');
+      setLoading(false);
     }
   };
 
