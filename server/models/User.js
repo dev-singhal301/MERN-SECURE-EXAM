@@ -8,12 +8,12 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['admin', 'student'], default: 'student' }
 }, { timestamps: true });
 
-// Automatically hash passwords before saving to the database
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+// Automatically hash passwords before saving (Removed 'next' for modern Mongoose)
+userSchema.pre('save', async function () {
+  if (!this.isModified('password')) return;
+  
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
-  next();
 });
 
 // Helper method to verify passwords during login

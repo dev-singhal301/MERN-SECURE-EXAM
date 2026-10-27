@@ -1,0 +1,26 @@
+{
+  "name": "mern-secure-exam",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "server": "npm run dev --prefix server",
+    "client": "npm run dev --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dev-singhal301/MERN-SECURE-EXAM.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/dev-singhal301/MERN-SECURE-EXAM/issues"
+  },
+  "homepage": "https://github.com/dev-singhal301/MERN-SECURE-EXAM#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
