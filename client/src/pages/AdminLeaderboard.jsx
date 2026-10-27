@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import api from '../lib/api';
 import { Trophy, ArrowLeft, Clock, Award, Medal, CheckCircle2, XCircle, Users } from 'lucide-react';
 
 export default function AdminLeaderboard() {
@@ -9,25 +9,21 @@ export default function AdminLeaderboard() {
   const [rankings, setRankings] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // Qualification States
   const [topK, setTopK] = useState(10);
   const [isQualifying, setIsQualifying] = useState(false);
 
   const fetchRankings = async () => {
     setLoading(true);
-    const { data: examData } = await supabase.from('exams').select('*').eq('id', examId).single();
-    
-    const { data: subData } = await supabase
-      .from('submissions')
-      .select('*')
-      .eq('exam_id', examId)
-      .eq('is_terminated', false)
-      .order('score', { ascending: false })
-      .order('time_taken_seconds', { ascending: true })
-      .order('submitted_at', { ascending: true });
-
-    setExam(examData);
-    setRankings(subData || []);
+    try {
+      const [examRes, boardRes] = await Promise.all([
+        api.get(`/exams/${examId}`),
+        api.get(`/submissions/leaderboard/${examId}`)
+      ]);
+      setExam(examRes.data.exam);
+      setRankings(boardRes.data || []);
+    } catch (error) {
+      console.error("Failed to load leaderboard", error);
+    }
     setLoading(false);
   };
 
@@ -41,17 +37,11 @@ export default function AdminLeaderboard() {
 
     setIsQualifying(true);
 
-    // rankings are already sorted by highest score -> fastest time
-    const qualifiedIds = rankings.slice(0, topK).map(r => r.id);
-    const disqualifiedIds = rankings.slice(topK).map(r => r.id);
+    const qualifiedIds = rankings.slice(0, topK).map(r => r._id);
+    const disqualifiedIds = rankings.slice(topK).map(r => r._id);
 
     try {
-      if (qualifiedIds.length > 0) {
-        await supabase.from('submissions').update({ is_qualified: true }).in('id', qualifiedIds);
-      }
-      if (disqualifiedIds.length > 0) {
-        await supabase.from('submissions').update({ is_qualified: false }).in('id', disqualifiedIds);
-      }
+      await api.put('/submissions/bulk-qualify', { qualifiedIds, disqualifiedIds });
       await fetchRankings();
     } catch (err) {
       console.error("Error setting qualifications:", err);
@@ -94,7 +84,6 @@ export default function AdminLeaderboard() {
         </div>
       </div>
 
-      {/* QUALIFICATION CONTROL PANEL */}
       <div className="bg-white border border-indigo-100 rounded-2xl p-5 shadow-sm flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-zinc-900 flex items-center gap-2">
@@ -106,9 +95,7 @@ export default function AdminLeaderboard() {
           <div className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-1.5">
             <span className="text-xs font-bold text-zinc-600">Top</span>
             <input 
-              type="number" 
-              min="1" 
-              value={topK} 
+              type="number" min="1" value={topK} 
               onChange={(e) => setTopK(parseInt(e.target.value) || 1)}
               className="w-16 bg-white border border-zinc-300 rounded-md px-2 py-1 text-sm font-bold text-center outline-none focus:border-indigo-500"
             />
@@ -142,7 +129,7 @@ export default function AdminLeaderboard() {
               <tr><td colSpan="5" className="p-8 text-center text-zinc-400">No qualifying submissions recorded.</td></tr>
             ) : (
               rankings.map((row, idx) => (
-                <tr key={row.id} className={`transition ${row.is_qualified ? 'bg-emerald-50/30' : 'hover:bg-zinc-50/70'}`}>
+                <tr key={row._id} className={`transition ${row.is_qualified ? 'bg-emerald-50/30' : 'hover:bg-zinc-50/70'}`}>
                   <td className="p-4">{getRankBadge(idx + 1)}</td>
                   <td className="p-4">
                     <span className="font-bold text-zinc-900 block">{row.student_name}</span>

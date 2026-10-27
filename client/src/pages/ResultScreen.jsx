@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { 
   Award, CheckCircle2, XCircle, AlertCircle, 
@@ -22,50 +22,33 @@ export default function ResultScreen() {
   useEffect(() => {
     const fetchResultData = async () => {
       if (!user) return;
-
-      const { data: examData } = await supabase.from('exams').select('*').eq('id', id).single();
-      const { data: subData } = await supabase
-        .from('submissions')
-        .select('*')
-        .eq('exam_id', id)
-        .eq('student_id', user.id)
-        .single();
-
-      // ALWAYS fetch questions to accurately calculate the max possible score for percentage
-      const { data: qData } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('exam_id', id)
-        .order('created_at', { ascending: true });
+      try {
+        const [examRes, mySubsRes] = await Promise.all([
+          api.get(`/exams/${id}`),
+          api.get('/submissions/me')
+        ]);
         
-      const targetCategory = subData?.selected_category;
-      if (examData.has_categories && targetCategory) {
-        setQuestions(qData.filter(q => q.category === targetCategory) || []);
-      } else {
-        setQuestions(qData || []);
-      }
+        const examData = examRes.data.exam;
+        const qData = examRes.data.questions;
+        const currentSub = mySubsRes.data.find(s => s.examId === id);
 
-      if (examData?.show_leaderboard) {
-        const { data: topList, error: rpcError } = await supabase
-          .rpc('get_exam_leaderboard', { target_exam_id: id });
-        
-        if (rpcError) {
-          const { data: fallbackList } = await supabase
-            .from('submissions')
-            .select('student_id, student_name, score, time_taken_seconds')
-            .eq('exam_id', id)
-            .eq('is_terminated', false)
-            .order('score', { ascending: false })
-            .order('time_taken_seconds', { ascending: true })
-            .order('submitted_at', { ascending: true });
-          setLeaderboard(fallbackList || []);
+        const targetCategory = currentSub?.selected_category;
+        if (examData.has_categories && targetCategory) {
+          setQuestions(qData.filter(q => q.category === targetCategory) || []);
         } else {
-          setLeaderboard(topList || []);
+          setQuestions(qData || []);
         }
-      }
 
-      setExam(examData);
-      setSubmission(subData);
+        if (examData?.show_leaderboard) {
+          const boardRes = await api.get(`/submissions/leaderboard/${id}`);
+          setLeaderboard(boardRes.data || []);
+        }
+
+        setExam(examData);
+        setSubmission(currentSub);
+      } catch (error) {
+        console.error("Failed to load results", error);
+      }
       setLoading(false);
     };
 
@@ -79,13 +62,7 @@ export default function ResultScreen() {
     return `${mins}m ${secs}s`;
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-zinc-100 flex items-center justify-center font-medium text-zinc-600">
-        Loading Assessment Results...
-      </div>
-    );
-  }
+  if (loading) return <div className="min-h-screen bg-zinc-100 flex items-center justify-center font-medium text-zinc-600">Loading Assessment Results...</div>;
 
   if (!submission) {
     return (
@@ -123,7 +100,7 @@ export default function ResultScreen() {
   const percentage = maxPossibleScore > 0 ? Math.round((submission.score / maxPossibleScore) * 100) : 0;
   
   const myRank = leaderboard?.length > 0 
-    ? leaderboard.findIndex((item) => item.student_id === user.id) + 1 
+    ? leaderboard.findIndex((item) => item.studentId === user._id) + 1 
     : 0;
 
   return (
@@ -231,17 +208,17 @@ export default function ResultScreen() {
 
               <div className="space-y-4">
                 {questions.map((q, idx) => {
-                  const studentChoice = submission.answers[q.id] !== undefined ? submission.answers[q.id] : submission.answers[idx];
+                  const studentChoice = submission.answers[q._id];
                   const correctIndices = q.correct_answers || [];
                   const pMarks = q.marks || 1;
                   const nMarks = q.negative_marks || 0;
 
                   if (q.type === 'text') {
-                    const isGraded = submission.is_reviewed && submission.manual_grades && submission.manual_grades[q.id] !== undefined;
-                    const awardedMarks = isGraded ? submission.manual_grades[q.id] : 0;
+                    const isGraded = submission.is_reviewed && submission.manual_grades && submission.manual_grades[q._id] !== undefined;
+                    const awardedMarks = isGraded ? submission.manual_grades[q._id] : 0;
 
                     return (
-                      <div key={q.id} className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs space-y-4">
+                      <div key={q._id} className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs space-y-4">
                         <div className="flex items-start justify-between gap-4">
                           <div className="font-semibold text-sm text-zinc-900 leading-snug">
                             <span className="text-zinc-400 mr-1.5">#{idx + 1}</span>
@@ -275,7 +252,7 @@ export default function ResultScreen() {
                   }
 
                   return (
-                    <div key={q.id} className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs space-y-4">
+                    <div key={q._id} className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs space-y-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="font-semibold text-sm text-zinc-900 leading-snug">
                           <span className="text-zinc-400 mr-1.5">#{idx + 1}</span>
@@ -363,7 +340,7 @@ export default function ResultScreen() {
             <tbody className="divide-y divide-zinc-100 font-medium">
               {leaderboard && leaderboard.length > 0 ? (
                 leaderboard.map((row, idx) => {
-                  const isMe = row.student_id === user.id;
+                  const isMe = row.studentId === user._id;
                   return (
                     <tr key={idx} className={isMe ? 'bg-teal-50/60 font-bold' : 'hover:bg-zinc-50/50'}>
                       <td className="p-3.5">

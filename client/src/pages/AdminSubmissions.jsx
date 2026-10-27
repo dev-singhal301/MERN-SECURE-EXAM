@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import api from '../lib/api';
 import { ArrowLeft, CheckCircle2, AlertCircle, FileText, Save, Clock, X, AlertOctagon } from 'lucide-react';
 
 export default function AdminSubmissions() {
@@ -10,20 +10,24 @@ export default function AdminSubmissions() {
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Grading Modal State
   const [selectedSub, setSelectedSub] = useState(null);
   const [manualGrades, setManualGrades] = useState({});
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
-    const { data: examData } = await supabase.from('exams').select('*').eq('id', examId).single();
-    const { data: subData } = await supabase.from('submissions').select('*').eq('exam_id', examId).order('submitted_at', { ascending: false });
-    const { data: qData } = await supabase.from('questions').select('*').eq('exam_id', examId);
-    
-    setExam(examData);
-    setSubmissions(subData || []);
-    setQuestions(qData || []);
+    try {
+      const [examRes, subsRes] = await Promise.all([
+        api.get(`/exams/${examId}`),
+        api.get(`/submissions/exam/${examId}`)
+      ]);
+      
+      setExam(examRes.data.exam);
+      setQuestions(examRes.data.questions || []);
+      setSubmissions(subsRes.data || []);
+    } catch (error) {
+      console.error("Error fetching submissions:", error);
+    }
     setLoading(false);
   };
 
@@ -46,12 +50,11 @@ export default function AdminSubmissions() {
   const saveGrades = async () => {
     setIsSaving(true);
     
-    // 1. Re-calculate automated MCQ score
     let autoScore = 0;
     questions.forEach((q) => {
-      if (q.type === 'text') return; // Skip text for auto-score
+      if (q.type === 'text') return; 
       
-      const userAns = selectedSub.answers[q.id];
+      const userAns = selectedSub.answers[q._id];
       const correct = q.correct_answers || [];
       
       if (q.type === 'single' || q.type === 'boolean') {
@@ -66,23 +69,20 @@ export default function AdminSubmissions() {
       }
     });
 
-    // 2. Add manual text scores
     let textScore = 0;
     Object.values(manualGrades).forEach(val => textScore += val);
-
     const finalScore = autoScore + textScore;
 
-    // 3. Save to database
-    await supabase.from('submissions')
-      .update({ 
+    try {
+      await api.put(`/submissions/${selectedSub._id}/grade`, { 
         score: finalScore, 
-        manual_grades: manualGrades,
-        is_reviewed: true 
-      })
-      .eq('id', selectedSub.id);
-
-    setSelectedSub(null);
-    fetchData(); // Refresh list
+        manual_grades: manualGrades 
+      });
+      setSelectedSub(null);
+      fetchData(); 
+    } catch (error) {
+      console.error("Failed to save grades:", error);
+    }
     setIsSaving(false);
   };
 
@@ -117,7 +117,7 @@ export default function AdminSubmissions() {
               <tr><td colSpan="5" className="p-6 text-center text-zinc-400">No submissions yet.</td></tr>
             ) : (
               submissions.map((sub) => (
-                <tr key={sub.id} className="hover:bg-zinc-50/70 transition">
+                <tr key={sub._id} className="hover:bg-zinc-50/70 transition">
                   <td className="p-4">
                     <span className="font-bold text-zinc-900 block">{sub.student_name}</span>
                     <span className="text-[11px] text-zinc-400">{sub.student_email}</span>
@@ -164,7 +164,6 @@ export default function AdminSubmissions() {
         </table>
       </div>
 
-      {/* Grading Modal */}
       {selectedSub && (
         <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-xs z-50 flex justify-end">
           <div className="w-full max-w-2xl bg-white h-full overflow-y-auto shadow-2xl flex flex-col animate-in slide-in-from-right">
@@ -183,9 +182,9 @@ export default function AdminSubmissions() {
                 <p className="text-sm text-zinc-500 text-center py-10">This assessment has no descriptive questions to grade.</p>
               ) : (
                 textQuestions.map((q, idx) => {
-                  const studentAnswer = selectedSub.answers[q.id];
+                  const studentAnswer = selectedSub.answers[q._id];
                   return (
-                    <div key={q.id} className="bg-zinc-50 border border-zinc-200 rounded-xl p-5 space-y-3">
+                    <div key={q._id} className="bg-zinc-50 border border-zinc-200 rounded-xl p-5 space-y-3">
                       <div className="flex justify-between items-start gap-4">
                         <h3 className="text-sm font-semibold text-zinc-900 leading-snug">
                           <span className="text-zinc-400 mr-2">Q{idx + 1}.</span>{q.question_text}
@@ -194,12 +193,9 @@ export default function AdminSubmissions() {
                           <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Assign Marks</div>
                           <div className="flex items-center gap-1">
                             <input 
-                              type="number" 
-                              min="0" 
-                              max={q.marks} 
-                              step="0.5"
-                              value={manualGrades[q.id] !== undefined ? manualGrades[q.id] : ''}
-                              onChange={(e) => handleGradeChange(q.id, e.target.value)}
+                              type="number" min="0" max={q.marks} step="0.5"
+                              value={manualGrades[q._id] !== undefined ? manualGrades[q._id] : ''}
+                              onChange={(e) => handleGradeChange(q._id, e.target.value)}
                               className="w-16 px-2 py-1 text-sm font-bold border border-zinc-300 rounded focus:border-teal-700 outline-none text-center"
                             />
                             <span className="text-xs font-semibold text-zinc-400">/ {q.marks}</span>
