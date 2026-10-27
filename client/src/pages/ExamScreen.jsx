@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import { io } from 'socket.io-client';
+import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useAntiCheat } from '../hooks/useAntiCheat';
 import QuestionPalette from '../components/QuestionPalette';
 import { AlertOctagon, Clock, Maximize2, ArrowRight, ArrowLeft, Send, AlertTriangle, X, Code2, Sparkles, Loader2, Eraser } from 'lucide-react';
 
 export default function ExamScreen() {
-  const { id } = useParams();
+  const { id } = useParams(); // This is the examId from the URL
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
@@ -42,8 +43,8 @@ export default function ExamScreen() {
   }, [answers, questions, exam, timeLeft, selectedCategory, aiUsageCount, isSubmitting]);
 
   const hasHandledExit = useRef(false);
-  const strikesStorageKey = `strikes_${id}_${user?.id || 'guest'}`;
-  const categoryStorageKey = `exam_cat_${id}_${user?.id || 'guest'}`;
+  const strikesStorageKey = `strikes_${id}_${user?._id || 'guest'}`;
+  const categoryStorageKey = `exam_cat_${id}_${user?._id || 'guest'}`;
 
   const handleTermination = async (strikeCount) => {
     await submitTest(true, strikeCount);
@@ -61,87 +62,88 @@ export default function ExamScreen() {
     const fetchExam = async () => {
       if (hasHandledExit.current) return;
 
-      const { data: examData } = await supabase.from('exams').select('*').eq('id', id).single();
-      const { data: qData } = await supabase.from('questions').select('*').eq('exam_id', id);
+      try {
+        const [examRes, subsRes] = await Promise.all([
+          api.get(`/exams/${id}`),
+          api.get('/submissions/me')
+        ]);
 
-      if (!isMounted) return;
+        if (!isMounted) return;
 
-      if (!examData || !qData) {
-        if (!hasHandledExit.current) {
-          hasHandledExit.current = true;
-          alert('Exam not found or inaccessible.');
-          navigate('/', { replace: true });
+        const examData = examRes.data.exam;
+        const qData = examRes.data.questions;
+        const existingSub = subsRes.data.find(s => s.examId === id);
+
+        if (!examData || !qData) {
+          if (!hasHandledExit.current) {
+            hasHandledExit.current = true;
+            alert('Exam not found or inaccessible.');
+            navigate('/', { replace: true });
+          }
+          return;
         }
-        return;
-      }
 
-      if (examData.is_ended) {
-        if (!hasHandledExit.current) {
-          hasHandledExit.current = true;
-          alert('This assessment has concluded and is no longer accepting submissions.');
-          navigate('/', { replace: true });
+        if (examData.is_ended) {
+          if (!hasHandledExit.current) {
+            hasHandledExit.current = true;
+            alert('This assessment has concluded and is no longer accepting submissions.');
+            navigate('/', { replace: true });
+          }
+          return;
         }
-        return;
-      }
 
-      const { data: existingSub } = await supabase
-        .from('submissions')
-        .select('id, status, is_terminated, selected_category, ai_usage_count, end_time')
-        .eq('exam_id', id)
-        .eq('student_id', user.id)
-        .maybeSingle();
-
-      if (!isMounted) return;
-
-      if (existingSub && (existingSub.status === 'completed' || existingSub.is_terminated)) {
-        if (!hasHandledExit.current) {
-          hasHandledExit.current = true;
-          alert('You have already completed or been disqualified from this assessment.');
-          navigate('/', { replace: true });
+        if (existingSub && (existingSub.status === 'completed' || existingSub.is_terminated)) {
+          if (!hasHandledExit.current) {
+            hasHandledExit.current = true;
+            alert('You have already completed or been disqualified from this assessment.');
+            navigate('/', { replace: true });
+          }
+          return;
         }
-        return;
-      }
 
-      const shuffle = (array) => [...array].sort(() => Math.random() - 0.5);
+        const shuffle = (array) => [...array].sort(() => Math.random() - 0.5);
 
-      const randomizedQuestions = shuffle(qData).map((q) => {
-        const indexedOptions = (q.options || []).map((opt, idx) => ({ text: opt, originalIndex: idx }));
-        return { ...q, shuffledOptions: shuffle(indexedOptions) };
-      });
+        const randomizedQuestions = shuffle(qData).map((q) => {
+          const indexedOptions = (q.options || []).map((opt, idx) => ({ text: opt, originalIndex: idx }));
+          return { ...q, shuffledOptions: shuffle(indexedOptions) };
+        });
 
-      setExam(examData);
-      setAllQuestions(randomizedQuestions);
+        setExam(examData);
+        setAllQuestions(randomizedQuestions);
 
-      if (existingSub) {
-        setSubmissionId(existingSub.id);
-        setAiUsageCount(existingSub.ai_usage_count || 0);
-        if (existingSub.end_time) {
-          setEndTime(existingSub.end_time);
-          const remaining = Math.max(0, Math.floor((new Date(existingSub.end_time).getTime() - Date.now()) / 1000));
-          setTimeLeft(remaining);
+        if (existingSub) {
+          setSubmissionId(existingSub._id);
+          setAiUsageCount(existingSub.ai_usage_count || 0);
+          if (existingSub.end_time) {
+            setEndTime(existingSub.end_time);
+            const remaining = Math.max(0, Math.floor((new Date(existingSub.end_time).getTime() - Date.now()) / 1000));
+            setTimeLeft(remaining);
+          } else {
+            setTimeLeft(examData.duration_minutes * 60);
+          }
         } else {
           setTimeLeft(examData.duration_minutes * 60);
         }
-      } else {
-        setTimeLeft(examData.duration_minutes * 60);
-      }
 
-      if (examData.has_categories) {
-        const uniqueCats = [...new Set(randomizedQuestions.map(q => q.category))].filter(Boolean);
-        setAvailableCategories(uniqueCats);
+        if (examData.has_categories) {
+          const uniqueCats = [...new Set(randomizedQuestions.map(q => q.category))].filter(Boolean);
+          setAvailableCategories(uniqueCats);
 
-        const savedCat = existingSub?.selected_category || localStorage.getItem(categoryStorageKey);
-        if (savedCat) {
-          setSelectedCategory(savedCat);
-          setQuestions(randomizedQuestions.filter(q => q.category === savedCat));
+          const savedCat = existingSub?.selected_category || localStorage.getItem(categoryStorageKey);
+          if (savedCat) {
+            setSelectedCategory(savedCat);
+            setQuestions(randomizedQuestions.filter(q => q.category === savedCat));
+          }
+        } else {
+          setQuestions(randomizedQuestions);
         }
-      } else {
-        setQuestions(randomizedQuestions);
+
+        const savedAnswers = localStorage.getItem(`exam_${id}_${user._id}`);
+        if (savedAnswers) setAnswers(JSON.parse(savedAnswers));
+
+      } catch (err) {
+        console.error("Failed to fetch exam:", err);
       }
-
-      const savedAnswers = localStorage.getItem(`exam_${id}_${user.id}`);
-      if (savedAnswers) setAnswers(JSON.parse(savedAnswers));
-
       setLoading(false);
     };
 
@@ -149,29 +151,30 @@ export default function ExamScreen() {
     return () => { isMounted = false; };
   }, [id, user, navigate]);
 
+  // Socket.io Realtime Terminations
   useEffect(() => {
     if (!id || !user) return;
-    const channel = supabase
-      .channel(`live_candidate_${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'submissions', filter: `student_id=eq.${user.id}` },
-        (payload) => {
-          if (payload.new && payload.new.is_terminated && payload.new.exam_id === id) {
-            if (!hasHandledExit.current) {
-              hasHandledExit.current = true;
-              alert('Your session has been terminated by the administrator.');
-              localStorage.removeItem(`exam_${id}_${user.id}`);
-              localStorage.removeItem(strikesStorageKey);
-              localStorage.removeItem(categoryStorageKey);
-              if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-              navigate(`/result/${id}`, { replace: true });
-            }
-          }
-        }
-      ).subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [id, user, navigate, strikesStorageKey]);
+    
+    const socket = io('http://localhost:5000');
+    
+    socket.on('connect', () => {
+      socket.emit('join_exam_room', user._id);
+    });
+
+    socket.on('exam_terminated', () => {
+      if (!hasHandledExit.current) {
+        hasHandledExit.current = true;
+        alert('Your session has been terminated by the administrator.');
+        localStorage.removeItem(`exam_${id}_${user._id}`);
+        localStorage.removeItem(strikesStorageKey);
+        localStorage.removeItem(categoryStorageKey);
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        navigate(`/result/${id}`, { replace: true });
+      }
+    });
+
+    return () => socket.disconnect();
+  }, [id, user, navigate, strikesStorageKey, categoryStorageKey]);
 
   useEffect(() => {
     if (loading || !endTime) return;
@@ -197,42 +200,17 @@ export default function ExamScreen() {
 
   const handleStartExam = async () => {
     await requestFullscreen();
-    
-    const calculatedEndTime = new Date(Date.now() + (exam.duration_minutes * 60 * 1000)).toISOString();
-
-    const payload = {
-      exam_id: id,
-      student_id: user.id,
-      student_name: profile?.full_name || 'Student',
-      student_email: user.email,
-      status: 'in_progress',
-      violations_count: strikes,
-      is_terminated: false,
-      selected_category: selectedCategory,
-      ai_usage_count: aiUsageCount
-    };
 
     try {
-      const { data: existing } = await supabase.from('submissions')
-        .select('id, end_time').eq('exam_id', id).eq('student_id', user.id).maybeSingle();
-
-      const finalEndTime = existing?.end_time || calculatedEndTime;
-      payload.end_time = finalEndTime;
-
-      let newSub;
-      if (existing) {
-        const { data, error } = await supabase.from('submissions').update(payload).eq('id', existing.id).select().single();
-        if (error) throw error;
-        newSub = data;
-      } else {
-        const { data, error } = await supabase.from('submissions').insert(payload).select().single();
-        if (error) throw error;
-        newSub = data;
-      }
+      const { data } = await api.post('/submissions/start', {
+        examId: id,
+        duration_minutes: exam.duration_minutes,
+        selected_category: selectedCategory
+      });
       
-      if (newSub) {
-        setSubmissionId(newSub.id);
-        setEndTime(newSub.end_time);
+      if (data) {
+        setSubmissionId(data._id);
+        setEndTime(data.end_time);
       }
     } catch (err) {
       console.error("Database Error starting exam:", err);
@@ -241,7 +219,7 @@ export default function ExamScreen() {
   };
 
   const handleSelectOption = (value, type) => {
-    const qId = questions[currentIndex].id;
+    const qId = questions[currentIndex]._id;
     const nextAnswers = { ...answers };
 
     if (type === 'text' || type === 'single' || type === 'boolean') {
@@ -255,16 +233,15 @@ export default function ExamScreen() {
       }
     }
     setAnswers(nextAnswers);
-    localStorage.setItem(`exam_${id}_${user.id}`, JSON.stringify(nextAnswers));
+    localStorage.setItem(`exam_${id}_${user._id}`, JSON.stringify(nextAnswers));
   };
 
-  // --- NEW CLEAR SELECTION FUNCTION ---
   const handleClearSelection = () => {
-    const qId = questions[currentIndex].id;
+    const qId = questions[currentIndex]._id;
     const nextAnswers = { ...answers };
     delete nextAnswers[qId];
     setAnswers(nextAnswers);
-    localStorage.setItem(`exam_${id}_${user.id}`, JSON.stringify(nextAnswers));
+    localStorage.setItem(`exam_${id}_${user._id}`, JSON.stringify(nextAnswers));
   };
 
   const handleAskAI = async () => {
@@ -279,12 +256,7 @@ export default function ExamScreen() {
     setChatHistory(prev => [...prev, { role: 'user', text: currentPrompt }]);
     setAiPrompt(''); 
 
-    const newCount = aiUsageCount + 1;
-    setAiUsageCount(newCount);
-    if (submissionId) {
-      await supabase.from('submissions').update({ ai_usage_count: newCount }).eq('id', submissionId);
-    }
-
+    setAiUsageCount(prev => prev + 1);
     setIsAiLoading(true);
 
     const currentQText = questions[currentIndex]?.question_text || '';
@@ -292,8 +264,6 @@ export default function ExamScreen() {
 
     if (!geminiKey) {
       setAiUsageCount((prev) => prev - 1);
-      if (submissionId) supabase.from('submissions').update({ ai_usage_count: aiUsageCount }).eq('id', submissionId);
-      
       setChatHistory(prev => [...prev, { role: 'assistant', text: "⚠️ System Error: AI API Key not configured by administrator." }]);
       setIsAiLoading(false);
       return;
@@ -309,19 +279,13 @@ export default function ExamScreen() {
               text: `You are an educational assistant helping a student during an assessment. \nCase Study Context: "${currentQText}"\nStudent's Question: "${currentPrompt}"\n\nProvide a helpful hint or structural guidance. DO NOT provide the direct answer. Provide detailed guidance, keeping your response under ${wordLimit} words.`
             }]
           }],
-          generationConfig: {
-            maxOutputTokens: 2048, 
-            temperature: 0.2 
-          }
+          generationConfig: { maxOutputTokens: 2048, temperature: 0.2 }
         })
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw { 
-          status: response.status, 
-          message: errorData?.error?.message || "API request failed" 
-        };
+        throw { status: response.status, message: errorData?.error?.message || "API request failed" };
       }
 
       const data = await response.json();
@@ -335,11 +299,7 @@ export default function ExamScreen() {
       
     } catch (err) {
       console.error("AI API Error:", err);
-      
       setAiUsageCount((prev) => prev - 1);
-      if (submissionId) {
-        supabase.from('submissions').update({ ai_usage_count: aiUsageCount }).eq('id', submissionId);
-      }
       
       if (err?.status === 429 || err?.message?.toLowerCase().includes("quota")) {
         setChatHistory(prev => [...prev, { role: 'assistant', text: "⏳ The AI Assistant has reached its daily limit and is currently resting. Please answer this question manually!" }]);
@@ -364,7 +324,7 @@ export default function ExamScreen() {
     let calculatedScore = 0;
     
     current.questions.forEach((q) => {
-      const userAns = current.answers[q.id];
+      const userAns = current.answers[q._id];
       const correct = q.correct_answers || [];
       const positiveMarks = q.marks || 1;
       const negativeMarks = q.negative_marks || 0;
@@ -383,32 +343,24 @@ export default function ExamScreen() {
       }
     });
 
-    const payload = {
-      exam_id: id,
-      student_id: user.id,
-      student_name: profile?.full_name || 'Student',
-      student_email: user.email,
-      answers: current.answers,
-      score: calculatedScore,
-      violations_count: finalStrikes,
-      is_terminated: isTerminated,
-      status: isTerminated ? 'terminated' : 'completed',
-      time_taken_seconds: timeSpentSeconds,
-      selected_category: current.selectedCategory,
-      ai_usage_count: current.aiUsageCount,
-      submitted_at: new Date().toISOString(),
-    };
-
     try {
-      const { data: existing } = await supabase.from('submissions')
-        .select('id').eq('exam_id', id).eq('student_id', user.id).maybeSingle();
+      // Assuming submissionId was set during handleStartExam. Fallback to existing fetch logic if mid-refresh.
+      let targetId = submissionId;
+      if (!targetId) {
+        const mySubs = await api.get('/submissions/me');
+        const existing = mySubs.data.find(s => s.examId === id);
+        targetId = existing?._id;
+      }
 
-      if (existing) {
-        const { error } = await supabase.from('submissions').update(payload).eq('id', existing.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('submissions').insert(payload);
-        if (error) throw error;
+      if (targetId) {
+        await api.put(`/submissions/${targetId}/submit`, {
+          answers: current.answers,
+          score: calculatedScore,
+          violations_count: finalStrikes,
+          is_terminated: isTerminated,
+          time_taken_seconds: timeSpentSeconds,
+          ai_usage_count: current.aiUsageCount
+        });
       }
     } catch (err) {
       console.error("Submission Error:", err);
@@ -418,7 +370,7 @@ export default function ExamScreen() {
       return; 
     }
 
-    localStorage.removeItem(`exam_${id}_${user.id}`);
+    localStorage.removeItem(`exam_${id}_${user._id}`);
     localStorage.removeItem(strikesStorageKey);
     localStorage.removeItem(categoryStorageKey);
 
@@ -515,11 +467,10 @@ export default function ExamScreen() {
 
   const paletteAnswers = {};
   questions.forEach((q, idx) => {
-    paletteAnswers[idx] = answers[q.id];
+    paletteAnswers[idx] = answers[q._id];
   });
 
-  // Check if current question has an answer recorded
-  const currentAnswer = answers[currentQ.id];
+  const currentAnswer = answers[currentQ._id];
   const hasAnswer = currentAnswer !== undefined && (!Array.isArray(currentAnswer) || currentAnswer.length > 0);
 
   return (
@@ -665,13 +616,13 @@ export default function ExamScreen() {
                 <textarea
                   rows={6}
                   placeholder="Type your detailed response here..."
-                  value={answers[currentQ.id] || ''}
+                  value={answers[currentQ._id] || ''}
                   onChange={(e) => handleSelectOption(e.target.value, 'text')}
                   className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-xl text-sm font-medium text-zinc-900 focus:outline-none focus:ring-2 focus:ring-teal-700/20 focus:border-teal-700 resize-none"
                 />
               ) : (
                 currentQ.shuffledOptions.map((opt, oIdx) => {
-                  const isSelected = currentQ.type === 'multiple' ? (answers[currentQ.id] || []).includes(opt.originalIndex) : answers[currentQ.id] === opt.originalIndex;
+                  const isSelected = currentQ.type === 'multiple' ? (answers[currentQ._id] || []).includes(opt.originalIndex) : answers[currentQ._id] === opt.originalIndex;
                   return (
                     <label key={oIdx} onClick={() => handleSelectOption(opt.originalIndex, currentQ.type)} className={`flex items-center gap-3.5 p-4 rounded-xl border text-sm font-medium transition-all cursor-pointer ${isSelected ? 'border-teal-700 bg-teal-50/60 text-zinc-950 shadow-xs' : 'border-zinc-200 bg-white hover:bg-zinc-50/80 text-zinc-700'}`}>
                       <input type={currentQ.type === 'multiple' ? 'checkbox' : 'radio'} checked={isSelected} onChange={() => {}} className="w-4 h-4 accent-teal-700 focus:ring-0" />
@@ -692,7 +643,6 @@ export default function ExamScreen() {
               <ArrowLeft className="w-4 h-4" /> Previous Question
             </button>
 
-            {/* NEW CLEAR SELECTION BUTTON */}
             {hasAnswer && (
               <button 
                 onClick={handleClearSelection}
