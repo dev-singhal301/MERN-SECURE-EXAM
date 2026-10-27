@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import { Clock, CheckCircle2, ArrowRight, BookOpen } from 'lucide-react';
@@ -11,16 +11,22 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     const loadDashboard = async () => {
-      const { data: examsData } = await supabase.from('exams').select('*').eq('is_published', true);
-      const { data: subsData } = await supabase.from('submissions').select('*').eq('student_id', user.id);
+      try {
+        const [examsRes, subsRes] = await Promise.all([
+          api.get('/exams'),
+          api.get('/submissions/me')
+        ]);
 
-      const subMap = {};
-      (subsData || []).forEach((s) => {
-        subMap[s.exam_id] = s;
-      });
+        const subMap = {};
+        subsRes.data.forEach((s) => {
+          subMap[s.examId] = s;
+        });
 
-      setExams(examsData || []);
-      setSubmissions(subMap);
+        setExams(examsRes.data);
+        setSubmissions(subMap);
+      } catch (error) {
+        console.error("Error loading dashboard data", error);
+      }
     };
 
     if (user) loadDashboard();
@@ -35,11 +41,11 @@ export default function StudentDashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {exams.map((exam) => {
-          const submission = submissions[exam.id];
+          const submission = submissions[exam._id];
 
           return (
             <div
-              key={exam.id}
+              key={exam._id}
               className="bg-white p-6 rounded-2xl border border-zinc-200/80 shadow-xs flex flex-col justify-between space-y-5"
             >
               <div className="space-y-2.5">
@@ -55,14 +61,14 @@ export default function StudentDashboard() {
 
               {submission ? (
                 <Link
-                  to={`/result/${exam.id}`}
+                  to={`/result/${exam._id}`}
                   className="flex items-center justify-center gap-2 py-2.5 bg-zinc-100 text-zinc-700 text-xs font-semibold rounded-xl hover:bg-zinc-200 transition"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5 text-teal-700" /> View Result
                 </Link>
               ) : (
                 <Link
-                  to={`/exam/${exam.id}`}
+                  to={`/exam/${exam._id}`}
                   className="flex items-center justify-center gap-2 py-2.5 bg-teal-800 text-white text-xs font-semibold rounded-xl hover:bg-teal-900 transition shadow-xs"
                 >
                   Start Assessment <ArrowRight className="w-3.5 h-3.5" />

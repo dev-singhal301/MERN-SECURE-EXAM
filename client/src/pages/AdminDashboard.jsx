@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import api from '../lib/api';
 import { Link } from 'react-router-dom';
 import { 
   Plus, Users, Clock, Eye, EyeOff, LayoutDashboard, 
@@ -12,8 +12,12 @@ export default function AdminDashboard() {
 
   const fetchExams = async () => {
     setLoading(true);
-    const { data } = await supabase.from('exams').select('*').order('created_at', { ascending: false });
-    setExams(data || []);
+    try {
+      const { data } = await api.get('/exams');
+      setExams(data);
+    } catch (error) {
+      console.error("Error fetching exams", error);
+    }
     setLoading(false);
   };
 
@@ -22,8 +26,12 @@ export default function AdminDashboard() {
   }, []);
 
   const toggleStatus = async (id, field, currentVal) => {
-    await supabase.from('exams').update({ [field]: !currentVal }).eq('id', id);
-    fetchExams();
+    try {
+      await api.put(`/exams/${id}`, { [field]: !currentVal });
+      fetchExams();
+    } catch (error) {
+      console.error("Error toggling status", error);
+    }
   };
 
   const handleEndExam = async (examId, currentEndedState) => {
@@ -33,18 +41,22 @@ export default function AdminDashboard() {
 
     if (!window.confirm(confirmMessage)) return;
 
-    await supabase.from('exams').update({ is_ended: !currentEndedState }).eq('id', examId);
-    fetchExams();
+    try {
+      await api.put(`/exams/${examId}`, { is_ended: !currentEndedState });
+      fetchExams();
+    } catch (error) {
+      console.error("Error ending exam", error);
+    }
   };
 
   const handleDeleteExam = async (examId, title) => {
     if (!window.confirm(`Permanently delete "${title}" and all associated questions/submissions?`)) return;
 
-    const { error } = await supabase.from('exams').delete().eq('id', examId);
-    if (error) {
-      alert(`Deletion failed: ${error.message}`);
-    } else {
+    try {
+      await api.delete(`/exams/${examId}`);
       fetchExams();
+    } catch (error) {
+      alert(`Deletion failed: ${error.response?.data?.message || error.message}`);
     }
   };
 
@@ -94,7 +106,7 @@ export default function AdminDashboard() {
                 </tr>
               ) : (
                 exams.map((exam) => (
-                  <tr key={exam.id} className="hover:bg-zinc-50/70 transition-colors">
+                  <tr key={exam._id} className="hover:bg-zinc-50/70 transition-colors">
                     <td className="p-4 font-bold text-zinc-900 text-sm">
                       {exam.title}
                       {exam.is_ended && (
@@ -111,7 +123,7 @@ export default function AdminDashboard() {
                     </td>
                     <td className="p-4">
                       <button
-                        onClick={() => toggleStatus(exam.id, 'is_published', exam.is_published)}
+                        onClick={() => toggleStatus(exam._id, 'is_published', exam.is_published)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                           exam.is_published
                             ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -124,7 +136,7 @@ export default function AdminDashboard() {
                     </td>
                     <td className="p-4">
                       <button
-                        onClick={() => handleEndExam(exam.id, exam.is_ended)}
+                        onClick={() => handleEndExam(exam._id, exam.is_ended)}
                         className={`inline-flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                           exam.is_ended
                             ? 'bg-zinc-100 text-zinc-700 border border-zinc-200 hover:bg-zinc-200'
@@ -137,7 +149,7 @@ export default function AdminDashboard() {
                     </td>
                     <td className="p-4">
                       <button
-                        onClick={() => toggleStatus(exam.id, 'show_results', exam.show_results)}
+                        onClick={() => toggleStatus(exam._id, 'show_results', exam.show_results)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                           exam.show_results
                             ? 'bg-teal-50 text-teal-800 border border-teal-200'
@@ -150,7 +162,7 @@ export default function AdminDashboard() {
                     </td>
                     <td className="p-4">
                       <button
-                        onClick={() => toggleStatus(exam.id, 'show_detailed_results', exam.show_detailed_results)}
+                        onClick={() => toggleStatus(exam._id, 'show_detailed_results', exam.show_detailed_results)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                           exam.show_detailed_results
                             ? 'bg-indigo-50 text-indigo-800 border border-indigo-200'
@@ -163,7 +175,7 @@ export default function AdminDashboard() {
                     </td>
                     <td className="p-4">
                       <button
-                        onClick={() => toggleStatus(exam.id, 'show_leaderboard', exam.show_leaderboard)}
+                        onClick={() => toggleStatus(exam._id, 'show_leaderboard', exam.show_leaderboard)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                           exam.show_leaderboard
                             ? 'bg-amber-50 text-amber-800 border border-amber-200'
@@ -177,27 +189,27 @@ export default function AdminDashboard() {
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Link
-                          to={`/admin/leaderboard/${exam.id}`}
+                          to={`/admin/leaderboard/${exam._id}`}
                           className="inline-flex items-center gap-1 text-amber-800 hover:text-amber-900 font-semibold text-xs bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg border border-amber-200/60 transition"
                           title="View Leaderboard"
                         >
                           <Trophy className="w-3.5 h-3.5" /> Ranking
                         </Link>
                         <Link
-                          to={`/admin/submissions/${exam.id}`}
+                          to={`/admin/submissions/${exam._id}`}
                           className="inline-flex items-center gap-1 text-teal-800 hover:text-teal-900 font-semibold text-xs bg-teal-50 hover:bg-teal-100 px-2.5 py-1.5 rounded-lg border border-teal-200/60 transition"
                         >
                           <Users className="w-3.5 h-3.5" /> Candidates
                         </Link>
                         <Link
-                          to={`/admin/edit/${exam.id}`}
+                          to={`/admin/edit/${exam._id}`}
                           className="p-1.5 text-zinc-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
                           title="Edit Exam"
                         >
                           <Edit className="w-4 h-4" />
                         </Link>
                         <button
-                          onClick={() => handleDeleteExam(exam.id, exam.title)}
+                          onClick={() => handleDeleteExam(exam._id, exam.title)}
                           className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
                           title="Delete Exam"
                         >

@@ -34,6 +34,8 @@ app.use(express.json());
 
 // Mount Routes
 app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/exams', require('./routes/examRoutes'));
+app.use('/api/submissions', require('./routes/submissionRoutes'));
 // We will build and mount examRoutes and submissionRoutes in the next step!
 
 const PORT = process.env.PORT || 5000;

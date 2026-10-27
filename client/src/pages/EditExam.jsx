@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { 
   ArrowLeft, Plus, Trash2, CheckCircle2, 
@@ -9,7 +9,6 @@ import {
 
 export default function EditExam() {
   const { examId } = useParams();
-  const { user } = useAuth();
   const navigate = useNavigate();
 
   const [title, setTitle] = useState('');
@@ -25,7 +24,6 @@ export default function EditExam() {
   const [categoryMessage, setCategoryMessage] = useState('Please select the track you wish to be tested on. You cannot change this later.');
   
   const [allowAiAssistant, setAllowAiAssistant] = useState(false);
-  // NEW: Dynamic AI Configuration State
   const [aiWordLimit, setAiWordLimit] = useState(200);
   const [aiAttemptsLimit, setAiAttemptsLimit] = useState(2);
 
@@ -37,13 +35,8 @@ export default function EditExam() {
   useEffect(() => {
     const fetchExamDetails = async () => {
       try {
-        const { data: examData, error: examErr } = await supabase
-          .from('exams')
-          .select('*')
-          .eq('id', examId)
-          .single();
-
-        if (examErr) throw examErr;
+        const { data } = await api.get(`/exams/${examId}`);
+        const { exam: examData, questions: qData } = data;
 
         setTitle(examData.title || '');
         setDescription(examData.description || '');
@@ -58,16 +51,8 @@ export default function EditExam() {
         setCategoryMessage(examData.category_selection_message || 'Please select the track you wish to be tested on. You cannot change this later.');
         
         setAllowAiAssistant(examData.allow_ai_assistant || false);
-        setAiWordLimit(examData.ai_word_limit || 500); // Load AI limit
-        setAiAttemptsLimit(examData.ai_attempts_limit || 2); // Load AI count
-
-        const { data: qData, error: qErr } = await supabase
-          .from('questions')
-          .select('*')
-          .eq('exam_id', examId)
-          .order('created_at', { ascending: true });
-
-        if (qErr) throw qErr;
+        setAiWordLimit(examData.ai_word_limit || 500);
+        setAiAttemptsLimit(examData.ai_attempts_limit || 2);
 
         if (qData && qData.length > 0) {
           setQuestions(qData.map(q => ({
@@ -175,32 +160,23 @@ export default function EditExam() {
     setIsSaving(true);
 
     try {
-      const { error: examErr } = await supabase
-        .from('exams')
-        .update({
-          title: title.trim(),
-          description: description.trim(),
-          duration_minutes: parseInt(durationMinutes, 10),
-          is_published: isPublished,
-          show_results: showResults,
-          show_detailed_results: showDetailedResults,
-          show_leaderboard: showLeaderboard,
-          has_categories: hasCategories,
-          category_selection_title: categoryTitle.trim(),
-          category_selection_message: categoryMessage.trim(),
-          allow_ai_assistant: allowAiAssistant,
-          ai_word_limit: parseInt(aiWordLimit, 10), // Save AI Limit
-          ai_attempts_limit: parseInt(aiAttemptsLimit, 10), // Save AI Count
-        })
-        .eq('id', examId);
+      const examData = {
+        title: title.trim(),
+        description: description.trim(),
+        duration_minutes: parseInt(durationMinutes, 10),
+        is_published: isPublished,
+        show_results: showResults,
+        show_detailed_results: showDetailedResults,
+        show_leaderboard: showLeaderboard,
+        has_categories: hasCategories,
+        category_selection_title: categoryTitle.trim(),
+        category_selection_message: categoryMessage.trim(),
+        allow_ai_assistant: allowAiAssistant,
+        ai_word_limit: parseInt(aiWordLimit, 10), 
+        ai_attempts_limit: parseInt(aiAttemptsLimit, 10), 
+      };
 
-      if (examErr) throw examErr;
-
-      const { error: delErr } = await supabase.from('questions').delete().eq('exam_id', examId);
-      if (delErr) throw delErr;
-
-      const questionsPayload = questions.map((q) => ({
-        exam_id: examId,
+      const questionsData = questions.map((q) => ({
         question_text: q.question_text.trim(),
         type: q.type,
         options: q.options.map((opt) => opt.trim()),
@@ -210,13 +186,12 @@ export default function EditExam() {
         category: hasCategories ? q.category.trim() : 'General',
       }));
 
-      const { error: qErr } = await supabase.from('questions').insert(questionsPayload);
-      if (qErr) throw qErr;
+      await api.put(`/exams/${examId}`, { examData, questionsData });
 
       navigate('/admin');
     } catch (err) {
       console.error(err);
-      setErrorMsg(err.message || 'Failed to update assessment.');
+      setErrorMsg(err.response?.data?.message || 'Failed to update assessment.');
     } finally {
       setIsSaving(false);
     }
@@ -305,7 +280,6 @@ export default function EditExam() {
                 <Sparkles className="w-4 h-4" /> Enable AI Assistant
               </label>
 
-              {/* NEW: DYNAMIC CONFIGURATION FOR AI SETTINGS */}
               {allowAiAssistant && (
                 <div className="col-span-2 grid grid-cols-2 gap-4 p-5 bg-purple-50/50 border border-purple-200/60 rounded-xl mt-2 animate-in fade-in slide-in-from-top-2">
                   <div className="space-y-1.5">

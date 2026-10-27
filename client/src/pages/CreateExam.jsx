@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import api from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { 
   ArrowLeft, Plus, Trash2, CheckCircle2, 
@@ -16,7 +16,7 @@ export default function CreateExam() {
   const [description, setDescription] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [isPublished, setIsPublished] = useState(false);
-  const [showResults, setShowResults] = useState(false); // FIXED: Default unchecked
+  const [showResults, setShowResults] = useState(false);
   const [showDetailedResults, setShowDetailedResults] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   
@@ -25,7 +25,6 @@ export default function CreateExam() {
   const [categoryMessage, setCategoryMessage] = useState('Please select the track you wish to be tested on. You cannot change this later.');
   
   const [allowAiAssistant, setAllowAiAssistant] = useState(false);
-  // NEW: Dynamic AI Configuration State
   const [aiWordLimit, setAiWordLimit] = useState(200);
   const [aiAttemptsLimit, setAiAttemptsLimit] = useState(2);
 
@@ -197,31 +196,23 @@ export default function CreateExam() {
     setLoading(true);
 
     try {
-      const { data: examData, error: examErr } = await supabase
-        .from('exams')
-        .insert({
-          title: title.trim(),
-          description: description.trim(),
-          duration_minutes: parseInt(durationMinutes, 10),
-          is_published: isPublished,
-          show_results: showResults,
-          show_detailed_results: showDetailedResults,
-          show_leaderboard: showLeaderboard,
-          has_categories: hasCategories,
-          category_selection_title: categoryTitle.trim(), 
-          category_selection_message: categoryMessage.trim(),
-          allow_ai_assistant: allowAiAssistant,
-          ai_word_limit: parseInt(aiWordLimit, 10), // Save AI Limit
-          ai_attempts_limit: parseInt(aiAttemptsLimit, 10), // Save AI Count
-          created_by: user.id,
-        })
-        .select()
-        .single();
+      const examData = {
+        title: title.trim(),
+        description: description.trim(),
+        duration_minutes: parseInt(durationMinutes, 10),
+        is_published: isPublished,
+        show_results: showResults,
+        show_detailed_results: showDetailedResults,
+        show_leaderboard: showLeaderboard,
+        has_categories: hasCategories,
+        category_selection_title: categoryTitle.trim(), 
+        category_selection_message: categoryMessage.trim(),
+        allow_ai_assistant: allowAiAssistant,
+        ai_word_limit: parseInt(aiWordLimit, 10),
+        ai_attempts_limit: parseInt(aiAttemptsLimit, 10),
+      };
 
-      if (examErr) throw examErr;
-
-      const questionsPayload = questions.map((q) => ({
-        exam_id: examData.id,
+      const questionsData = questions.map((q) => ({
         question_text: q.question_text.trim(),
         type: q.type,
         options: q.options.map((opt) => opt.trim()),
@@ -231,13 +222,13 @@ export default function CreateExam() {
         category: hasCategories ? q.category.trim() : 'General',
       }));
 
-      const { error: qErr } = await supabase.from('questions').insert(questionsPayload);
-      if (qErr) throw qErr;
+      // Single MERN API call to create the exam and all questions
+      await api.post('/exams', { examData, questionsData });
 
       navigate('/admin');
     } catch (err) {
       console.error(err);
-      setErrorMsg(err.message || 'Failed to create assessment.');
+      setErrorMsg(err.response?.data?.message || 'Failed to create assessment.');
     } finally {
       setLoading(false);
     }
@@ -333,7 +324,6 @@ export default function CreateExam() {
                 <Sparkles className="w-4 h-4" /> Enable AI Assistant
               </label>
 
-              {/* NEW: DYNAMIC CONFIGURATION FOR AI SETTINGS */}
               {allowAiAssistant && (
                 <div className="col-span-2 grid grid-cols-2 gap-4 p-5 bg-purple-50/50 border border-purple-200/60 rounded-xl mt-2 animate-in fade-in slide-in-from-top-2">
                   <div className="space-y-1.5">
